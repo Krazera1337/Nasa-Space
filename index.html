@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Flretivity</title>
+<title>Firetivity</title>
 <meta name="description" content="AI-assisted fire hazard explorer built on NASA BASS-II microgravity combustion data from the International Space Station.">
 <meta name="generator" content="Code written with AI assistance (Anthropic Claude). Data: NASA Physical Sciences Informatics, BASS-II (PSI-25).">
 <meta name="ai-generated-code" content="true">
@@ -83,6 +83,15 @@ input[type=range]{width:100%;accent-color:var(--text-primary)}
 .presets{display:flex;flex-wrap:wrap;gap:6px}
 .chip{font:inherit;font-size:12.5px;border:1px solid var(--line);background:transparent;color:var(--text-secondary);border-radius:999px;padding:5px 10px;cursor:pointer;text-align:left}
 .chip[aria-pressed=true],.chip:hover{color:var(--text-primary);border-color:var(--text-primary)}
+
+/* visual simulation (always a dark "inside the duct" view, in both themes) */
+.simvis{border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#0a0c11;margin-bottom:6px}
+#simCanvas{display:block;width:100%;height:240px}
+.simvis-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#11141b;border-top:1px solid #222734;color:#c9ccd6;font-size:12.5px;line-height:1.35}
+.simvis-bar .btn{background:#1b1f29;color:#e6e8ee;border-color:#2c3140;padding:5px 10px;font-size:12.5px;flex:none}
+.simvis-bar .btn:hover{border-color:#5a6274}
+.simvis-dot{width:9px;height:9px;border-radius:50%;flex:none}
+@media (max-width:600px){#simCanvas{height:190px}}
 
 /* verdict */
 .verdict{border:1px solid var(--line);border-radius:14px;padding:18px;background:var(--surface-2)}
@@ -260,6 +269,16 @@ footer p{margin:0 0 8px;max-width:90ch}
       </div>
       <button class="btn no-print" id="printBtn" type="button">Export assessment (PDF)</button>
     </div>
+    <div class="simvis" id="simVis">
+      <canvas id="simCanvas" role="img" aria-label="Animated illustration of the flame in the ISS flow duct"></canvas>
+      <div class="simvis-bar">
+        <span class="simvis-dot" id="simDot"></span>
+        <span id="simStatus"></span>
+        <span style="flex:1"></span>
+        <button class="btn no-print" id="simReplay" type="button">Replay</button>
+      </div>
+    </div>
+    <p class="note" style="margin:6px 0 18px">Side view inside the ISS flow duct, with air entering from the left. With no gravity there is no rising plume, so the flame wraps both sides of the sample and creeps upstream. The animation follows the hazard rating; it is an illustration, not a combustion model.</p>
     <div class="grid2">
       <div>
         <div class="ctrl">
@@ -938,11 +957,223 @@ function wireExplorer(){
   };
 }
 
+/* ---------- visual simulation: illustrative, driven by assess() ---------- */
+const SIM={mode:"",f:"",a:null,pt:0,t:0,front:1,I:0,ign:0,hold:0,done:false,parts:[],smoke:[],drops:[],last:0,on:false,vis:true,W:0,H:0,dpr:1};
+const RM=matchMedia("(prefers-reduced-motion: reduce)");
+const SMAT={
+  film:{h:2,col:"#c7d3e0"},
+  slab:{h:8,col:"#9fb6cf",burnt:"#3b2f2a",bh:.55},
+  rod_clear:{h:13,col:"rgba(200,225,245,.55)",burnt:"rgba(125,100,88,.7)",bh:.8,round:true},
+  rod_black:{h:13,col:"#2b2e36",burnt:"#17110f",bh:.8,round:true},
+  sibal:{h:4,col:"#d8ccb0",burnt:"#5f636c",bh:.5,weave:true},
+  nomex:{h:4,col:"#d9b347",burnt:"#8a6a2a",bh:.8,weave:true},
+  sphere:{point:"sphere"}, wax:{point:"wax"},
+};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function simMode(a){
+  if(a.level==="low") return state.f==="nomex" ? "noign" : "quench";
+  if(a.level==="high") return "burn";
+  if(a.level==="elevated") return "flicker";
+  return state.o2>O2_MAX ? "beyond" : "unknown";
+}
+function simStatusText(m,a){
+  return {
+    burn:`The flame creeps upstream against the ${state.u} cm/s airflow and keeps burning.`,
+    beyond:`Above ${O2_MAX}% O₂ there is no test data. Drawn as a hotter, faster fire to show the risk, not as a measurement.`,
+    flicker:`Close to the limit: the flame survives but weakens and flickers.`,
+    quench: a.q!=null ? `Airflow is below the ≈${a.q.toFixed(1)} cm/s quench limit, so the flame shrinks and goes out.` : `Nearby tests say a flame goes out here, so it shrinks and dies.`,
+    noign:`The igniter heats the Nomex III, but it never catches fire.`,
+    unknown:`Outside the data: the flame is drawn faded because this condition can't be rated.`,
+  }[m];
+}
+function simGeo(){ const W=SIM.W,H=SIM.H; const xa=W*.16, xb=W*.84; return {W,H,y0:H*.56,xa,xb,xf:xa+SIM.front*(xb-xa),sc:Math.max(.7,W/900)}; }
+function flowSpeed(){ return state.u<=0 ? 0 : (10+280*Math.sqrt(Math.min(state.u,U_MAX)/U_MAX))*Math.max(.6,SIM.W/900); }
+function flameDims(){
+  const lean=Math.sqrt(Math.min(state.u,U_MAX)/U_MAX), o2f=clamp((state.o2-13)/9,0,1.8), I=SIM.I, sc=Math.max(.7,SIM.W/900);
+  return {L:(16+95*lean+22*o2f)*I*sc+2, h:(8+8*o2f)*I*(1-.35*lean)*sc, soot:clamp(o2f*(.4+lean)*I-.45,0,1)};
+}
+function simReset(){ Object.assign(SIM,{pt:0,front:1,I:0,ign:0,hold:0,done:false,smoke:[],drops:[]}); }
+function simSeed(){ SIM.parts=Array.from({length:80},()=>({x:Math.random()*SIM.W,y:22+Math.random()*(SIM.H-44),k:.7+Math.random()*.6})); }
+function simSet(){
+  const a=assess(state.f,state.o2,state.u), m=simMode(a);
+  if(m!==SIM.mode || state.f!==SIM.f){ SIM.mode=m; SIM.f=state.f; simReset(); }
+  SIM.a=a;
+  const s=simStatusText(m,a);
+  $("simStatus").textContent=s; $("simDot").style.background=LEVEL[a.level].bg;
+  $("simCanvas").setAttribute("aria-label","Animated illustration: "+s);
+  if(RM.matches) simStill(); else if(!SIM.on) simDraw();
+}
+function simStill(){ // reduced motion: one representative frame per setting
+  const m=SIM.mode;
+  Object.assign(SIM,{pt:3,t:0,done:false,front:.55,smoke:[],drops:[],ign:m==="noign"?1:0,
+    I:{burn:1,beyond:1.35,flicker:.6,unknown:.7,quench:.3,noign:0}[m]});
+  simDraw();
+}
+function wickPos(){ const {W,y0}=simGeo(); return {x:W*.47-4,y:y0}; }
+function sphereGeo(){ const {W,H,y0}=simGeo(); return {cx:W*.5,cy:y0,R:Math.min(H*.17,38)}; }
+function flameAnchor(){
+  const g=simGeo(), mat=SMAT[state.f];
+  if(mat.point==="sphere"){ const s=sphereGeo(); return {x:s.cx-s.R*.95,y:s.cy}; }
+  if(mat.point==="wax") return wickPos();
+  return {x:g.xf,y:g.y0};
+}
+function simStep(dt){
+  const S=SIM, m=S.mode, mat=SMAT[state.f], IGN=.9;
+  S.pt+=dt; S.t+=dt;
+  const o2f=clamp((state.o2-13)/9,0,1.8), tl=S.pt-IGN;
+  if(m==="noign"){
+    S.ign = S.pt<2.6 ? Math.min(1,S.pt/.6) : Math.max(0,S.ign-dt*1.2);
+    S.I=0; if(S.pt>4.4) simReset();
+  } else {
+    S.ign = S.pt<IGN ? Math.min(1,S.pt/.5) : Math.max(0,S.ign-dt*1.5);
+    let target=0;
+    if(tl>0 && !S.done){
+      if(m==="burn") target=1;
+      else if(m==="beyond") target=1.35;
+      else if(m==="unknown") target=.7;
+      else if(m==="flicker") target=.5+.22*Math.sin(tl*2.1)+.12*Math.sin(tl*6.3+1);
+      else if(m==="quench") target= tl<.5 ? .75 : Math.max(0,.75*(1-(tl-.5)/2.4));
+    }
+    S.I += (target-S.I)*Math.min(1,dt*4);
+    if(!mat.point && S.I>.05 && !S.done){
+      S.front -= dt*.055*S.I*(.55+.45*o2f);
+      if(S.front<=0){ S.front=0; S.done=true; }
+    }
+    if(mat.point && tl>8 && m!=="quench") S.done=true;
+    if(S.done){ S.hold+=dt; if(S.hold>2) simReset(); }
+    if(m==="quench" && tl>4.8) simReset();
+  }
+  // airflow tracers
+  const sp=flowSpeed();
+  for(const p of S.parts){ p.x+=sp*p.k*dt; if(p.x>S.W+12){ p.x=-12; p.y=22+Math.random()*(S.H-44); } }
+  // smoke from the flame tail, plus a last puff as a quenched flame dies
+  const d=flameDims(), an=flameAnchor();
+  let rate = S.I>.08 ? (.4+d.soot)*S.I*18 : 0;
+  if(m==="quench" && tl>2.6 && tl<3.8) rate+=22;
+  if(m==="noign" && S.ign>.8) rate+=6;
+  if(Math.random()<rate*dt) S.smoke.push({x:an.x+d.L*(.6+Math.random()*.4),y:an.y+(Math.random()-.5)*(d.h+6),vx:sp*.6+(Math.random()-.5)*10,vy:(Math.random()-.5)*12,age:0,life:1.8+Math.random()*1.2});
+  for(const s of S.smoke){ s.x+=s.vx*dt; s.y+=s.vy*dt; s.age+=dt; }
+  S.smoke=S.smoke.filter(s=>s.age<s.life);
+  // wax: occasional burning droplet thrown upstream (report p. 46)
+  if(state.f==="wax" && S.I>.5 && m!=="quench" && Math.random()<dt/3){ const w=wickPos(); S.drops.push({x:w.x,y:w.y,vx:-(45+Math.random()*45),vy:(Math.random()-.5)*36,age:0}); }
+  for(const p of S.drops){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.age+=dt; }
+  S.drops=S.drops.filter(p=>p.age<1.8 && p.x>0);
+}
+function bar(ctx,x1,x2,y,h,col,round){
+  if(x2-x1<.5) return; ctx.fillStyle=col; ctx.beginPath();
+  if(round && ctx.roundRect) ctx.roundRect(x1,y-h/2,x2-x1,h,h/2); else ctx.rect(x1,y-h/2,x2-x1,h);
+  ctx.fill();
+}
+function flameEnv(ctx,x,y,L,h,alpha,soot,hot){
+  ctx.save(); ctx.globalCompositeOperation="lighter";
+  const g=ctx.createLinearGradient(x-h*.4,0,x+L,0);
+  g.addColorStop(0,`rgba(${hot?"150,190,255":"90,155,255"},${.9*alpha})`);
+  g.addColorStop(.35,`rgba(70,115,255,${.6*alpha})`);
+  g.addColorStop(.7,`rgba(255,${hot?170:140},60,${(.15+.6*soot)*alpha})`);
+  g.addColorStop(1,"rgba(255,120,40,0)");
+  ctx.beginPath(); ctx.moveTo(x-h*.4,y);
+  ctx.bezierCurveTo(x-h*.4,y-h*.95,x+L*.45,y-h*1.05,x+L,y-h*.15);
+  ctx.quadraticCurveTo(x+L*1.08,y,x+L,y+h*.15);
+  ctx.bezierCurveTo(x+L*.45,y+h*1.05,x-h*.4,y+h*.95,x-h*.4,y);
+  ctx.fillStyle=g; ctx.shadowColor=`rgba(80,140,255,${.8*alpha})`; ctx.shadowBlur=18; ctx.fill();
+  // thin bright reaction sheet at the leading edge
+  ctx.shadowBlur=0; ctx.strokeStyle=`rgba(190,220,255,${.55*alpha})`; ctx.lineWidth=1.4;
+  ctx.beginPath(); ctx.moveTo(x+h*.5,y-h*.8); ctx.quadraticCurveTo(x-h*.3,y-h*.55,x-h*.3,y); ctx.quadraticCurveTo(x-h*.3,y+h*.55,x+h*.5,y+h*.8); ctx.stroke();
+  ctx.restore();
+}
+function simDraw(){
+  const c=$("simCanvas"), S=SIM; if(!S.W||!S.H) return;
+  const ctx=c.getContext("2d"), {W,H,y0,xa,xb,xf,sc}=simGeo(), mat=SMAT[state.f], m=S.mode;
+  ctx.setTransform(S.dpr,0,0,S.dpr,0,0);
+  const bg=ctx.createLinearGradient(0,0,0,H); bg.addColorStop(0,"#0d1018"); bg.addColorStop(1,"#07090d");
+  ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+  // duct walls
+  ctx.strokeStyle="#262c3a"; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,15); ctx.lineTo(W,15); ctx.moveTo(0,H-15); ctx.lineTo(W,H-15); ctx.stroke();
+  // airflow tracers
+  const sp=flowSpeed(); ctx.strokeStyle="rgba(150,185,235,.32)"; ctx.fillStyle="rgba(150,185,235,.32)"; ctx.lineWidth=1.2;
+  ctx.beginPath();
+  for(const p of S.parts){ const len=Math.min(28,sp*p.k*.07); if(len<1.5){ ctx.moveTo(p.x+1.2,p.y); ctx.arc(p.x,p.y,1.2,0,7); } else { ctx.moveTo(p.x-len,p.y); ctx.lineTo(p.x,p.y); } }
+  sp>0 ? ctx.stroke() : ctx.fill();
+  // labels
+  ctx.font='11px "IBM Plex Mono", ui-monospace, monospace'; ctx.textBaseline="middle";
+  ctx.fillStyle="#8d95a8"; ctx.textAlign="left"; ctx.fillText(state.u>0?`AIRFLOW → ${state.u} cm/s`:"STILL AIR · 0 cm/s",12,30);
+  ctx.textAlign="right"; ctx.fillText(`MICROGRAVITY · ${state.o2.toFixed(1)}% O₂`,W-12,30);
+  if(m==="beyond"||m==="unknown"){ ctx.fillStyle="#fbc659"; ctx.textAlign="center"; ctx.fillText("OUTSIDE TESTED RANGE · ILLUSTRATIVE",W/2,H-30); }
+  // smoke (under the flame)
+  for(const s of S.smoke){ const k=s.age/s.life; ctx.fillStyle=`rgba(140,142,152,${.2*(1-k)})`; ctx.beginPath(); ctx.arc(s.x,s.y,(2+9*k)*sc,0,7); ctx.fill(); }
+  // sample
+  let ign={x:xb+12*sc,y:y0};
+  if(!mat.point){
+    const h=Math.max(2,mat.h*sc);
+    ctx.fillStyle="#3a4150"; ctx.fillRect(xa-9,y0-h/2-7,6,h+14); ctx.fillRect(xb+3,y0-h/2-7,6,h+14);
+    bar(ctx,xa,xf,y0,h,mat.col,mat.round);
+    if(mat.burnt) bar(ctx,xf,xb,y0,h*mat.bh,mat.burnt,mat.round);
+    if(state.f==="rod_black" && xf-xa>1){ ctx.strokeStyle="#5a6070"; ctx.lineWidth=1; ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(xa+.5,y0-h/2+.5,xf-xa-1,h-1,h/2); else ctx.rect(xa+.5,y0-h/2+.5,xf-xa-1,h-1); ctx.stroke(); }
+    if(mat.weave){ ctx.strokeStyle="rgba(0,0,0,.25)"; ctx.lineWidth=1; ctx.beginPath(); for(let x=xa+2;x<xf;x+=4){ ctx.moveTo(x,y0-h/2); ctx.lineTo(x,y0+h/2); } ctx.stroke(); }
+    if(mat.round && state.f==="rod_clear"){ ctx.strokeStyle="rgba(255,255,255,.35)"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(xa+4,y0-h*.28); ctx.lineTo(Math.max(xa+4,xf-4),y0-h*.28); ctx.stroke(); }
+    if(S.I>.05){ const r=ctx.createRadialGradient(xf,y0,0,xf,y0,10*sc); r.addColorStop(0,`rgba(255,150,70,${.7*Math.min(1,S.I)})`); r.addColorStop(1,"rgba(255,150,70,0)"); ctx.fillStyle=r; ctx.fillRect(xf-12*sc,y0-12*sc,24*sc,24*sc); }
+  } else if(mat.point==="sphere"){
+    const s=sphereGeo(); ctx.fillStyle="#3a4150"; ctx.fillRect(s.cx+s.R-2,s.cy-2,W*.84-(s.cx+s.R),4);
+    ign={x:s.cx-s.R-10*sc,y:s.cy}; // sphere itself is drawn after the flame so the glow wraps around it
+  } else {
+    const w=wickPos(), bw=W*.15, bh=16*sc; ctx.fillStyle="#3a4150"; ctx.fillRect(w.x+4+bw,y0-3,W*.84-(w.x+4+bw),6);
+    bar(ctx,w.x+4,w.x+4+bw,y0,bh,"#ece3cf",false);
+    ctx.strokeStyle="#2a221c"; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(w.x+5,y0); ctx.lineTo(w.x-2,y0); ctx.stroke();
+    ign={x:w.x-12*sc,y:y0};
+  }
+  // hot-wire igniter
+  if(S.ign>.02){
+    const r=ctx.createRadialGradient(ign.x,ign.y,0,ign.x,ign.y,14*sc); r.addColorStop(0,`rgba(255,130,40,${.8*S.ign})`); r.addColorStop(1,"rgba(255,130,40,0)");
+    ctx.fillStyle=r; ctx.fillRect(ign.x-16*sc,ign.y-16*sc,32*sc,32*sc);
+    ctx.strokeStyle=`rgb(${120+135*S.ign},${80+60*S.ign},${70-30*S.ign})`; ctx.lineWidth=1.6; ctx.beginPath();
+    for(let i=0;i<=6;i++){ const yy=ign.y-9*sc+i*3*sc; ctx[i?"lineTo":"moveTo"](ign.x+(i%2?3:-3)*sc,yy); } ctx.stroke();
+  }
+  // flame
+  if(S.I>.02){
+    const d=flameDims(), fl=1+.07*Math.sin(S.t*17)+.04*Math.sin(S.t*31+1.3), fl2=1+.05*Math.sin(S.t*11+.4);
+    const alpha=(m==="unknown"?.45:1)*clamp(S.I*1.4,0,1), hot=m==="beyond";
+    if(mat.point==="sphere"){ const s=sphereGeo(); flameEnv(ctx,s.cx-s.R*1.05,s.cy,(2*s.R+d.L)*fl2,(s.R+d.h*.8)*fl,alpha,d.soot,hot); }
+    else if(mat.point==="wax"){ const w=wickPos(); flameEnv(ctx,w.x-4,w.y,(d.L*.7+8)*fl2,(d.h*.9+5)*fl,alpha,d.soot,hot); }
+    else flameEnv(ctx,xf,y0,d.L*fl2,(d.h+Math.max(2,mat.h*sc)/2)*fl,alpha,d.soot,hot);
+  }
+  if(mat.point==="sphere"){
+    const s=sphereGeo(), g=ctx.createRadialGradient(s.cx-s.R*.35,s.cy-s.R*.35,2,s.cx,s.cy,s.R);
+    g.addColorStop(0,"#c9d8e8"); g.addColorStop(1,"#4f6580");
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(s.cx,s.cy,s.R,0,7); ctx.fill();
+  }
+  // burning droplets
+  for(const p of S.drops){ const a=1-p.age/1.8; ctx.fillStyle=`rgba(255,170,70,${a})`; ctx.shadowColor="rgba(255,140,40,.9)"; ctx.shadowBlur=8; ctx.beginPath(); ctx.arc(p.x,p.y,2.2*sc,0,7); ctx.fill(); ctx.shadowBlur=0; }
+}
+function simLoop(ts){
+  if(!SIM.on) return;
+  const dt=SIM.last? Math.min(.05,(ts-SIM.last)/1000) : 0; SIM.last=ts;
+  simStep(dt); simDraw(); SIM.raf=requestAnimationFrame(simLoop);
+}
+function simStart(){ if(SIM.on||RM.matches) return; SIM.on=true; SIM.last=0; SIM.raf=requestAnimationFrame(simLoop); }
+function simStop(){ SIM.on=false; cancelAnimationFrame(SIM.raf); }
+function simRun(){ (SIM.vis && !document.hidden && !RM.matches) ? simStart() : simStop(); }
+function simResize(){
+  const c=$("simCanvas"), r=c.getBoundingClientRect(); if(!r.width) return;
+  const fresh=!SIM.W; SIM.dpr=Math.min(2,window.devicePixelRatio||1); SIM.W=r.width; SIM.H=r.height;
+  c.width=Math.round(r.width*SIM.dpr); c.height=Math.round(r.height*SIM.dpr);
+  if(fresh||!SIM.parts.length) simSeed();
+  if(RM.matches) simStill(); else if(!SIM.on) simDraw();
+}
+function simInit(){
+  simResize();
+  if("ResizeObserver" in window) new ResizeObserver(simResize).observe($("simCanvas")); else addEventListener("resize",simResize);
+  if("IntersectionObserver" in window) new IntersectionObserver(([en])=>{ SIM.vis=en.isIntersecting; simRun(); }).observe($("simVis"));
+  document.addEventListener("visibilitychange",simRun);
+  (RM.addEventListener ? RM.addEventListener("change",()=>{ simRun(); if(RM.matches) simStill(); }) : 0);
+  $("simReplay").onclick=()=>{ simReset(); if(RM.matches) simStill(); };
+  simRun();
+}
+
 /* ---------- wiring ---------- */
 function update(){
   $("o2v").textContent=state.o2.toFixed(1)+"%"+(state.o2>O2_MAX||state.o2<O2_MIN?" · untested":"");
   $("uv").textContent=state.u+" cm/s";
-  renderVerdict(); renderMap();
+  renderVerdict(); renderMap(); simSet();
 }
 famOptions($("fam")); famOptions($("mapFam"),true);
 $("fam").onchange=e=>{state.f=e.target.value; update();};
@@ -977,7 +1208,7 @@ $("themeBtn").onclick=()=>{const root=document.documentElement;
   root.dataset.theme=dark?"light":"dark"; try{localStorage.setItem("fif-theme",root.dataset.theme)}catch(e){} };
 try{const t=localStorage.getItem("fif-theme"); if(t) document.documentElement.dataset.theme=t;}catch(e){}
 
-renderExplorer(); wireExplorer(); renderPresets(); renderRank(); renderCmp(); syncControls(); update();
+renderExplorer(); wireExplorer(); renderPresets(); renderRank(); renderCmp(); syncControls(); simInit(); update();
 greet();
 // probe once so the badge is honest about which mode is live
 fetch(API_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"ping"})}).then(r=>setMode(r.ok)).catch(()=>setMode(false));
