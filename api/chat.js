@@ -50,6 +50,36 @@ FINDINGS:
 9. Ranking by lowest O2 at which each material burned in the test table: clear PMMA rod 14.2%,
    thin PMMA film 15.0%, black PMMA rod 15.4%, SIBAL fabric 16.4%, PMMA sphere 17.2%,
    wax candle 17.4%, PMMA slab 17.9%, Nomex III never ignited.
+
+EXPLORATION ATMOSPHERES (challenge brief):
+- Spacesuits: 100% O2 at 4.3 psi. Earth sea level: 14.7 psi.
+- Moon base and pressurized rovers: expected 30% O2 or more at 10.2 psi or less (to shorten pre-breathe),
+  more than a 40% increase in O2 vs Earth air, making materials much more flammable.
+- PSI has NO partial-gravity combustion data yet. LUCI (Lunar-g Combustion Investigation) and FM2
+  (Flammability of Materials on the Moon) are expected to add some. Microgravity and normal-gravity results
+  could bound intermediate gravity. ACME E-FIELD mimicked partial gravity with electric fields on flame ions.
+
+OTHER INVESTIGATIONS:
+- BASS: earlier flight of the same MSG flow duct in normal ISS air; its SIBAL data were analysed with BASS-II.
+- Saffire I-VI: large samples burned in uncrewed Cygnus vehicles after leaving ISS. SIBAL fabric up to
+  ~41x94 cm, cotton, PMMA 5-10 mm. Flow 5-25 cm/s. Saffire IV: 22% O2, 100 kPa. Saffire V: 25-26% O2 at
+  ~71 kPa (closest test to a Moon-base atmosphere). Fires up to 10 kW; flames did not always go out quickly
+  when flow stopped; reducing flow to 5 cm/s before shutoff gave rapid extinction. [Saffire, ICES-2021-266]
+- SAME / SAME-R: heated (not burned) Teflon, Kapton, cellulose/cotton, silicone rubber and others to measure
+  smoke particle sizes. Much smoke mass >1 micron, but all made many sub-micron particles; aging changes sizes.
+  Detectors should cover a wide size range and target early pre-fire smoke. [NASA SAME fact sheet]
+- DAFT / DAFT-2: used a SAME instrument to measure cabin dust.
+- FLEX: fire suppression by diluting the atmosphere with CO2 and helium, using burning liquid droplets
+  (MDCA in the Combustion Integrated Rack). FLEX-2: follow-on with combustor-like fuels and conditions.
+  CFI: cool flames from droplets, which can keep reacting after the visible flame goes out.
+- ACME (six gas-flame experiments in the CIR): BRE emulates burning solids/liquids with a gas burner to study
+  flammability in still air and whether flammability tests work in low and partial gravity; CFI-G used up to
+  85% O2 flowing from a spherical burner (highest O2 microgravity tests in PSI); E-FIELD as above.
+- SPICE (smoke point of gas jet flames) and SLICE (flame lift-off), in the MSG duct built for SPICE.
+- Rockets and propellants are out of scope of PSI data.
+
+EARTH APPLICATIONS: microgravity flames validate models for wildfires, building fires and waste-to-energy;
+ISS fine-water-mist extinguishers; improved smoke detection and firefighter gear (clothing, air tanks).
 `;
 
 const MATERIALS = `material codes: film = thin PMMA/acrylic sheet (<1 mm, plastic film, thin plastic);
@@ -57,7 +87,7 @@ slab = thick PMMA 1-5 mm (panel, plate, block); rod_clear = clear PMMA rod; rod_
 sibal = cotton-fiberglass fabric (cotton, cloth, clothing, bag, towel); nomex = Nomex III fabric;
 sphere = PMMA spherical section; wax = wax candle.`;
 
-const CHAT_PROMPT = `You are the hazard assistant on "Flame in Freefall", a student dashboard about fire safety in spacecraft.
+const CHAT_PROMPT = `You are the SI hazard assistant on "Flame in Freefall", a student dashboard about fire safety for spacecraft, stations, Moon and Mars bases and pressurized rovers.
 Answer ONLY from the findings below. Never invent numbers, materials, or page references.
 If the data does not cover something, say so plainly and say what new testing would be needed.
 
@@ -70,7 +100,7 @@ reply with ONE line and nothing else, in this exact form:
   If not given, use the current simulator value.
 - If the material cannot reasonably be mapped to any code, ask one short question instead.
 
-Otherwise answer in 2-5 short sentences of plain English for a non-expert, then cite pages like [p. 25].
+Otherwise answer in 2-5 short sentences of plain English for a non-expert, then cite BASS-II report pages like [p. 25], or name the investigation source for other findings.
 Use **bold** sparingly. No headings, no lists longer than 3 items.
 
 ${FINDINGS}`;
