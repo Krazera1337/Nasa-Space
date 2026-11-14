@@ -145,6 +145,23 @@ th.num{text-align:right}
 .ask{display:flex;gap:8px}
 .ask input{flex:1;font:inherit;font-size:14.5px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);color:var(--text-primary);min-width:0}
 .sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.followups{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.followups .chip{background:var(--surface-1)}
+.ask .btn:disabled{opacity:.55;cursor:wait}
+.chat-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.chat-foot .note{margin:0}
+kbd{font:11.5px "IBM Plex Mono",monospace;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px;background:var(--surface-2)}
+.fab{position:fixed;right:18px;bottom:18px;z-index:40;display:inline-flex;align-items:center;gap:8px;font:inherit;font-size:14px;font-weight:500;padding:11px 16px;border-radius:999px;border:1px solid var(--text-primary);background:var(--text-primary);color:var(--surface-1);cursor:pointer;box-shadow:0 8px 28px rgba(0,0,0,.25)}
+.fab svg{width:18px;height:18px}
+.fab[hidden]{display:none}
+.dock{position:fixed;right:18px;bottom:18px;z-index:41;width:min(430px,calc(100vw - 32px));height:min(640px,calc(100vh - 36px));display:flex;flex-direction:column;background:var(--surface-1);border:1px solid var(--line);border-radius:16px;box-shadow:0 14px 44px rgba(0,0,0,.3);padding:14px}
+.dock[hidden]{display:none}
+.dock-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.dock-head .btn{padding:5px 10px}
+.dock #chatBox{display:flex;flex-direction:column;flex:1;min-height:0}
+.dock .chat{flex:1;min-height:0;max-height:none}
+.dock .chat-foot .note{display:none}
+@media (max-width:600px){.fab{right:16px;bottom:16px}.dock{right:16px;left:16px;bottom:16px;width:auto;height:calc(100vh - 32px)}}
 
 .inv{display:grid;grid-template-columns:34px minmax(0,1fr);gap:12px;padding:14px 0;border-top:1px solid var(--line)}
 .inv:first-child{border-top:0}
@@ -325,14 +342,31 @@ footer p{margin:0 0 8px;max-width:90ch}
       <h2 id="askH">SI hazard assistant</h2>
       <p class="sub">Describe a scenario in plain words, like “a cotton bag catches fire at 18% oxygen with the fans off”. The assistant pulls out the conditions, runs the hazard model on the real ISS data, and explains the result with report page references.</p>
     </div><span class="pill" id="modeBadge">Checking AI…</span></div>
-    <div class="chat" id="chat" aria-live="polite"></div>
-    <form class="ask" id="askForm">
-      <label class="sr" for="q">Your question</label>
-      <input id="q" autocomplete="off" placeholder="e.g. Would a Nomex pouch burn at 22% O₂ with fans running?">
-      <button class="btn primary" type="submit">Ask</button>
-    </form>
-    <div class="sugg" id="sugg"></div>
+    <div id="chatHome">
+      <div id="chatBox">
+        <div class="chat" id="chat" aria-live="polite"></div>
+        <form class="ask" id="askForm">
+          <label class="sr" for="q">Your question</label>
+          <input id="q" autocomplete="off" enterkeyhint="send" placeholder="e.g. Would a Nomex pouch burn at 22% O₂ with fans running?">
+          <button class="btn primary" type="submit" id="askBtn">Ask</button>
+        </form>
+        <div class="chat-foot">
+          <span class="note"><kbd>Enter</kbd> send · <kbd>↑</kbd> last question · <kbd>/</kbd> open the assistant from anywhere</span>
+          <button class="btn" type="button" id="clearBtn">Clear chat</button>
+        </div>
+      </div>
+    </div>
+    <p class="note" id="chatAway" hidden>The assistant is open in the floating panel. <button class="btn" type="button" id="dockBack">Bring it back here</button></p>
   </section>
+
+  <button class="fab no-print" id="fab" type="button" aria-controls="dock" aria-expanded="false" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>
+    Ask the assistant
+  </button>
+  <aside class="dock no-print" id="dock" hidden aria-label="SI hazard assistant">
+    <div class="dock-head"><b>SI hazard assistant</b><span class="pill" id="dockMode"></span><span style="flex:1"></span><button class="btn" type="button" id="dockClose" aria-label="Close assistant">✕</button></div>
+    <div id="dockSlot" style="display:flex;flex-direction:column;flex:1;min-height:0"></div>
+  </aside>
 
   <!-- EARTH -->
   <section class="card" id="earthCard" aria-labelledby="earthH">
@@ -641,10 +675,25 @@ function md(t){ // tiny, safe formatter: escape first, then **bold**, [p. N] cit
     .replace(/\[(p\.\s?\d+(?:\s?[,–-]\s?\d+)?)\]/g,'<span class="cite">Report $1</span>')
     .split(/\n{2,}/).map(p=>`<p>${p.replace(/\n/g,"<br>")}</p>`).join("");
 }
-function botSay(html,cites){ const d=document.createElement("div"); d.className="msg bot"; d.innerHTML=html+(cites&&cites.length?`<p>${cites.map(c=>`<span class="cite">${c}</span>`).join("")}</p>`:""); $("chat").append(d); $("chat").scrollTop=1e6; return d; }
+function chips(list){ return list&&list.length ? `<div class="followups">${list.map(c=>`<button class="chip" type="button" data-q="${esc(c.q)}">${esc(c.l)}</button>`).join("")}</div>` : ""; }
+function botSay(html,cites,follow){ const d=document.createElement("div"); d.className="msg bot"; d.innerHTML=html+(cites&&cites.length?`<p>${cites.map(c=>`<span class="cite">${c}</span>`).join("")}</p>`:"")+chips(follow); $("chat").append(d); $("chat").scrollTop=1e6; return d; }
 function typing(){ const d=botSay(`<p class="mono" style="color:var(--text-muted)">thinking…</p>`); return d; }
-function setMode(on){ aiMode=on; $("modeBadge").textContent = on ? "AI mode · grounded in BASS-II" : "Offline mode · built-in answers";
-  $("modeBadge").style.borderColor = on ? "var(--good)" : "var(--line)"; }
+function setMode(on){ aiMode=on; const t = on ? "AI mode · grounded in NASA data" : "Offline mode · built-in answers";
+  for(const id of ["modeBadge","dockMode"]){ $(id).textContent=t; $(id).style.borderColor = on ? "var(--good)" : "var(--line)"; } }
+
+/* one-tap follow-ups: scenario variations, or starter questions not yet asked */
+const asked=new Set();
+function scenarioFollowups(){
+  const {f,o2,u}=state, q=(ff,oo,uu)=>`Would a ${FAM[ff].short} keep burning at ${oo}% O₂ and ${uu} cm/s?`;
+  const alt = f==="nomex" ? "film" : "nomex";
+  return [
+    u<5 ? {l:"Fans on (10 cm/s)",q:q(f,o2,10)} : {l:"Fans off (0.5 cm/s)",q:q(f,o2,0.5)},
+    o2>=19 ? {l:"Leaner air (16% O₂)",q:q(f,16,u)} : {l:"Normal air (21% O₂)",q:q(f,21,u)},
+    {l:`Same with ${FAM[alt].short}`,q:q(alt,o2,u)},
+  ];
+}
+function starterFollowups(n=3){ return SUGG.filter(s=>!asked.has(s)).slice(0,n).map(s=>({l:s,q:s})); }
+function greet(){ botSay(`<p>Hi! Describe a fire scenario (material, oxygen %, airflow) or ask a fire-safety question. I answer from NASA's ISS combustion experiments, mainly BASS-II, and show where each answer comes from.</p>`, null, starterFollowups(4)); }
 
 /* local scenario parser: used offline, and to sanity-check what the model extracts */
 function parseScenario(q){
@@ -695,15 +744,22 @@ function offlineAnswer(q){
   const sc=parseScenario(q);
   if(sc){ const {a,card}=runScenario(sc);
     const note = (sc.assumed.o2||sc.assumed.u) ? `<p style="color:var(--text-muted);font-size:13px">Assumed ${[sc.assumed.o2?`${state.o2}% O₂`:null, sc.assumed.u?`${state.u} cm/s airflow`:null].filter(Boolean).join(" and ")} from the simulator. I've loaded this scenario into the simulator above.</p>`:`<p style="color:var(--text-muted);font-size:13px">Loaded into the simulator above.</p>`;
-    return botSay(card+`<p>${a.why}</p>`+note, a.cites); }
+    return botSay(card+`<p>${a.why}</p>`+note, a.cites, scenarioFollowups()); }
   const hit=KB.find(x=>x.k.test(q));
-  return hit ? botSay(hit.a(),hit.c)
-    : botSay(`<p>I can only answer from the BASS-II data, and I didn't find a match for that. Try describing a scenario (material, oxygen %, airflow), or ask about Nomex, fans, oxygen levels, Earth tests, or Moon/Mars conditions.</p>`);
+  return hit ? botSay(hit.a(),hit.c,starterFollowups())
+    : botSay(`<p>I didn't find a match for that in the data I cover. Try a scenario with a material, oxygen % and airflow, or ask about Nomex, fans, oxygen, Earth tests, Saffire, smoke detection, suppression or Moon/Mars bases.</p>`, null, starterFollowups());
 }
 
+let busy=false, lastQ="";
+function setBusy(on){ busy=on; $("askBtn").disabled=on; $("askBtn").textContent=on?"…":"Ask"; }
 async function ask(q){
+  if(busy) return;
+  asked.add(q); lastQ=q; setBusy(true);
+  try{ await answer(q); } finally { setBusy(false); }
+}
+async function answer(q){
   const u=document.createElement("div"); u.className="msg user"; u.textContent=q; $("chat").append(u); $("chat").scrollTop=1e6;
-  if(aiMode===false){ setTimeout(()=>offlineAnswer(q),150); return; }
+  if(aiMode===false){ await new Promise(r=>setTimeout(r,150)); offlineAnswer(q); return; }
   const wait=typing();
   history.push({role:"user",content:q});
   try{
@@ -718,13 +774,13 @@ async function ask(q){
         try{ expl=await callLLM({mode:"explain",question:q,result:resultForModel(a)}); }
         catch(e){ expl=a.why; }
         wait.remove();
-        botSay(card+md(expl)+`<p style="color:var(--text-muted);font-size:13px">Loaded into the simulator above.</p>`, a.cites);
+        botSay(card+md(expl)+`<p style="color:var(--text-muted);font-size:13px">Loaded into the simulator above.</p>`, a.cites, scenarioFollowups());
         history.push({role:"assistant",content:`[Ran assessment: ${LEVEL[a.level].label} for ${FAM[state.f].short} at ${state.o2}% O2, ${state.u} cm/s] ${expl}`});
         return;
       }
       reply=reply.replace(m[0],"").trim()||"I couldn't read that scenario. Which material, oxygen level and airflow do you mean?";
     }
-    wait.remove(); botSay(md(reply)); history.push({role:"assistant",content:reply});
+    wait.remove(); botSay(md(reply),null,starterFollowups()); history.push({role:"assistant",content:reply});
   }catch(e){
     history.pop(); wait.remove();
     if(aiMode!==false) setMode(false);
@@ -897,9 +953,24 @@ $("tblBtn").onclick=e=>{const on=$("mapTbl").hidden; $("mapTbl").hidden=!on; $("
 $("legend").innerHTML=Object.keys(OUT).map(o=>`<span>${legendSwatch(o)}${OUT[o].label}</span>`).join("")+`<span style="color:var(--text-muted)">┼ your setting</span>`;
 attachTip("map","tip",i=>{const t=TESTS[i]; return `<b>Test ${t.id} · ${FAM[t.f].short}</b><div class="r"><span>Team</span><span>${t.pi}</span></div><div class="r"><span>O₂ at start</span><span>${t.o2.toFixed(1)}%</span></div><div class="r"><span>Airflow at limit</span><span>${t.x} cm/s</span></div><div class="r"><span>Outcome</span><span>${OUT[t.out].label.split(" (")[0]}</span></div>`;});
 attachTip("cmp","tip2",i=>{const c=CMP[i]; return `<b>${c.n}</b><div class="r"><span>Earth</span><span>${c.earth}% O₂</span></div><div class="r"><span>ISS</span><span>${c.space}% O₂</span></div><div class="r"><span>Gap</span><span>${(c.earth-c.space).toFixed(1)} pts</span></div><div style="color:var(--text-muted);margin-top:4px">${c.note} · Report ${c.cite}</div>`;});
-$("askForm").onsubmit=e=>{e.preventDefault(); const q=$("q").value.trim(); if(q){ask(q); $("q").value="";}};
-$("sugg").innerHTML=SUGG.map(s=>`<button class="chip" type="button">${s}</button>`).join("");
-$("sugg").onclick=e=>{if(e.target.matches(".chip")) ask(e.target.textContent);};
+$("askForm").onsubmit=e=>{e.preventDefault(); const q=$("q").value.trim(); if(q && !busy){ask(q); $("q").value="";}};
+$("q").onkeydown=e=>{ if(e.key==="ArrowUp" && !$("q").value && lastQ){ e.preventDefault(); $("q").value=lastQ; } };
+$("chat").onclick=e=>{ const b=e.target.closest(".chip[data-q]"); if(b && !busy) ask(b.dataset.q); };
+$("clearBtn").onclick=()=>{ if(busy) return; $("chat").innerHTML=""; history.length=0; asked.clear(); lastQ=""; greet(); $("q").focus(); };
+// floating assistant: the same chat moves into a docked panel so it's reachable from any section
+let cardInView=false;
+function syncFab(){ $("fab").hidden = !$("dock").hidden || cardInView; }
+function openDock(){ $("dockSlot").append($("chatBox")); $("dock").hidden=false; $("chatAway").hidden=false; $("fab").setAttribute("aria-expanded","true"); syncFab(); $("chat").scrollTop=1e6; $("q").focus(); }
+function closeDock(){ $("chatHome").append($("chatBox")); $("dock").hidden=true; $("chatAway").hidden=true; $("fab").setAttribute("aria-expanded","false"); syncFab(); }
+$("fab").onclick=openDock; $("dockClose").onclick=()=>{ closeDock(); $("fab").focus(); }; $("dockBack").onclick=closeDock;
+if("IntersectionObserver" in window) new IntersectionObserver(([en])=>{ cardInView=en.isIntersecting; syncFab(); },{threshold:0.2}).observe($("askCard"));
+else syncFab();
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape" && !$("dock").hidden){ closeDock(); return; }
+  if(e.key==="/" && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && !e.target.isContentEditable){
+    e.preventDefault(); if(cardInView && $("dock").hidden) $("q").focus(); else if($("dock").hidden) openDock(); else $("q").focus();
+  }
+});
 $("printBtn").onclick=()=>{$("printDate").textContent=new Date().toLocaleString(); window.print();};
 $("themeBtn").onclick=()=>{const root=document.documentElement;
   const dark=root.dataset.theme? root.dataset.theme==="dark" : matchMedia("(prefers-color-scheme: dark)").matches;
@@ -907,7 +978,7 @@ $("themeBtn").onclick=()=>{const root=document.documentElement;
 try{const t=localStorage.getItem("fif-theme"); if(t) document.documentElement.dataset.theme=t;}catch(e){}
 
 renderExplorer(); wireExplorer(); renderPresets(); renderRank(); renderCmp(); syncControls(); update();
-botSay(`<p>Hi! Describe a fire scenario or ask a safety question. I only use the BASS-II space experiments, and I show the page each answer comes from.</p>`);
+greet();
 // probe once so the badge is honest about which mode is live
 fetch(API_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"ping"})}).then(r=>setMode(r.ok)).catch(()=>setMode(false));
 </script>
